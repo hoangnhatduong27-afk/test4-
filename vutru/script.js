@@ -72,149 +72,105 @@ for (let i = 0; i < 15; i++) {
   scene.add(nebula);
 }
 
-// ---- TẠO THIÊN HÀ (GALAXY) ----
-const galaxyParameters = {
-  count: 100000,
-  arms: 6,
-  radius: 100,
-  spin: 0.5,
-  randomness: 0.2,
-  randomnessPower: 20,
-  insideColor: new THREE.Color(0xd63ed6),
-  outsideColor: new THREE.Color(0x48b8b8),
-};
+const galaxyGroups = [];
 
-const defaultHeartImages = Array.from({ length: 58 }, (_, i) => `images/img${i + 1}.jpg`);
+for (let groupIndex = 0; groupIndex < numGroups; groupIndex++) {
+    const positions = new Float32Array(pointsPerGroup * 3);
+    const colors = new Float32Array(pointsPerGroup * 3);
+    
+    // Tải texture cho nhóm hiện tại
+    const texture = textureLoader.load(heartImages[groupIndex]);
 
-const heartImages = [
-  ...(window.dataCCD?.data?.heartImages || []),
-  ...defaultHeartImages,
-];
+    for (let i = 0; i < pointsPerGroup; i++) {
+        const radius = Math.pow(Math.random(), galaxyParameters.randomnessPower) * galaxyParameters.radius;
+        // Chia cánh cho nhóm hiện tại, đảm bảo không vượt quá số cánh đã định
+        const branchAngle = (i % galaxyParameters.arms) / galaxyParameters.arms * Math.PI * 2;
+        const spinAngle = radius * galaxyParameters.spin;
 
-const textureLoader = new THREE.TextureLoader();
-const numGroups = heartImages.length;
+        const randomX = (Math.random() - 0.5) * galaxyParameters.randomness * radius;
+        const randomY = (Math.random() - 0.5) * galaxyParameters.randomness * radius * 1.2;
+        const randomZ = (Math.random() - 0.5) * galaxyParameters.randomness * radius;
+        const totalAngle = branchAngle + spinAngle;
 
-// --- LOGIC DÙNG NỘI SUY ---
+        // Bỏ qua các điểm ở gần tâm nếu ngẫu nhiên không đạt
+        if (radius < 30 && Math.random() < 0.8) continue;
+        
+        const i3 = i * 3;
+        
+        // Cập nhật vị trí điểm
+        positions[i3] = Math.cos(totalAngle) * radius + randomX;
+        positions[i3 + 1] = randomY;
+        positions[i3 + 2] = Math.sin(totalAngle) * radius + randomZ;
 
-// Mật độ điểm khi chỉ có 1 ảnh (cao nhất)
-const maxDensity = 50000;
-// Mật độ điểm khi có 10 ảnh trở lên (thấp nhất)
-const minDensity = 2000;
-// Số lượng ảnh tối đa mà chúng ta quan tâm để điều chỉnh
-const maxGroupsForScale = 14;
+        // Cập nhật màu điểm (có thể giữ nguyên hoặc thay đổi)
+        const mixedColor = new THREE.Color(0xff66ff);
+        mixedColor.lerp(new THREE.Color(0x66ffff), radius / galaxyParameters.radius);
+        mixedColor.multiplyScalar(0.7 + 0.3 * Math.random());
+        colors[i3] = mixedColor.r;
+        colors[i3 + 1] = mixedColor.g;
+        colors[i3 + 2] = mixedColor.b;
+    }
 
-let pointsPerGroup;
+    // Tạo Geometry và Material cho nhóm hiện tại
+    const galaxyGeometry = new THREE.BufferGeometry();
+    galaxyGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    galaxyGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-if (numGroups <= 1) {
-  pointsPerGroup = maxDensity;
-} else if (numGroups >= maxGroupsForScale) {
-  pointsPerGroup = minDensity;
-} else {
-  const t = (numGroups - 1) / (maxGroupsForScale - 1);
-  pointsPerGroup = Math.floor(maxDensity * (1 - t) + minDensity * t);
-}
+    const galaxyMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0.0 },
+            uSize: { value: 50.0 * renderer.getPixelRatio() },
+            uRippleTime: { value: -1.0 },
+            uRippleSpeed: { value: 40.0 },
+            uRippleWidth: { value: 20.0 },
+            // THÊM TEXTURE VÀO UNIFORM
+            uTexture: { value: texture } 
+        },
+        // Sửa Vertex và Fragment Shader để dùng Texture
+        vertexShader: `
+            // ... giữ nguyên Vertex Shader, KHÔNG cần sửa gì nhiều trong phần này ...
+            // Bạn chỉ cần đảm bảo shader có thể nhận uTexture. Nhưng vì đây là Points, 
+            // ta chỉ cần dùng nó trong Fragment Shader.
+        `,
+        fragmentShader: `
+            // Sửa Fragment Shader để sử dụng texture
+            varying vec3 vColor;
+            uniform sampler2D uTexture;
+            
+            void main() {
+                // Lấy màu từ texture, dùng gl_PointCoord làm tọa độ UV
+                vec4 texColor = texture2D(uTexture, gl_PointCoord);
+                
+                // Loại bỏ phần không có texture (ví dụ: nền đen/alpha)
+                // if (texColor.a < 0.1) discard;
 
-if (pointsPerGroup * numGroups > galaxyParameters.count) {
-  pointsPerGroup = Math.floor(galaxyParameters.count / numGroups);
-}
-
-console.log(`Số lượng ảnh: ${numGroups}, Điểm mỗi ảnh: ${pointsPerGroup}`);
-
-const positions = new Float32Array(galaxyParameters.count * 3);
-const colors = new Float32Array(galaxyParameters.count * 3);
-
-
-let pointIdx = 0;
-for (let i = 0; i < galaxyParameters.count; i++) {
-  const radius = Math.pow(Math.random(), galaxyParameters.randomnessPower) * galaxyParameters.radius;
-  const branchAngle = (i % galaxyParameters.arms) / galaxyParameters.arms * Math.PI * 2;
-  const spinAngle = radius * galaxyParameters.spin;
-
-  const randomX = (Math.random() - 0.5) * galaxyParameters.randomness * radius;
-  const randomY = (Math.random() - 0.5) * galaxyParameters.randomness * radius * 1.2; // thay từ 0.5 lên 1.5
-  const randomZ = (Math.random() - 0.5) * galaxyParameters.randomness * radius;
-  const totalAngle = branchAngle + spinAngle;
-
-  if (radius < 30 && Math.random() < 0.8) continue;
-
-  const i3 = pointIdx * 3;
-  positions[i3] = Math.cos(totalAngle) * radius + randomX;
-  positions[i3 + 1] = randomY;
-  positions[i3 + 2] = Math.sin(totalAngle) * radius + randomZ;
-
-  const mixedColor = new THREE.Color(0xff66ff);
-  mixedColor.lerp(new THREE.Color(0x66ffff), radius / galaxyParameters.radius);
-  mixedColor.multiplyScalar(0.7 + 0.3 * Math.random());
-  colors[i3] = mixedColor.r;
-  colors[i3 + 1] = mixedColor.g;
-  colors[i3 + 2] = mixedColor.b;
-
-  pointIdx++;
-}
-
-const galaxyGeometry = new THREE.BufferGeometry();
-galaxyGeometry.setAttribute('position', new THREE.BufferAttribute(positions.slice(0, pointIdx * 3), 3));
-galaxyGeometry.setAttribute('color', new THREE.BufferAttribute(colors.slice(0, pointIdx * 3), 3));
-
-const galaxyMaterial = new THREE.ShaderMaterial({
-  uniforms: {
-    uTime: { value: 0.0 },
-    uSize: { value: 50.0 * renderer.getPixelRatio() },
-    uRippleTime: { value: -1.0 },
-    uRippleSpeed: { value: 40.0 },
-    uRippleWidth: { value: 20.0 }
-  },
-  vertexShader: `
-        uniform float uSize;
-        uniform float uTime;
-        uniform float uRippleTime;
-        uniform float uRippleSpeed;
-        uniform float uRippleWidth;
-
-        varying vec3 vColor;
-
-        void main() {
-            // Lấy màu gốc từ geometry (giống hệt vertexColors: true)
-            vColor = color;
-
-            vec4 modelPosition = modelMatrix * vec4(position, 1.0);
-
-            // ---- LOGIC HIỆU ỨNG GỢN SÓNG ----
-            if (uRippleTime > 0.0) {
-                float rippleRadius = (uTime - uRippleTime) * uRippleSpeed;
-                float particleDist = length(modelPosition.xyz);
-
-                float strength = 1.0 - smoothstep(rippleRadius - uRippleWidth, rippleRadius + uRippleWidth, particleDist);
-                strength *= smoothstep(rippleRadius + uRippleWidth, rippleRadius - uRippleWidth, particleDist);
-
-                if (strength > 0.0) {
-                    vColor += vec3(strength * 2.0); // Làm màu sáng hơn khi sóng đi qua
-                }
+                // Làm cho các hạt có hình tròn thay vì hình vuông (nếu không dùng texture)
+                float dist = length(gl_PointCoord - vec2(0.5));
+                if (dist > 0.5) discard;
+                
+                // Kết hợp màu sắc của điểm và màu từ texture
+                gl_FragColor = vec4(vColor * texColor.rgb, texColor.a);
+                // Hoặc chỉ dùng texture: gl_FragColor = texColor;
             }
-
-            vec4 viewPosition = viewMatrix * modelPosition;
-            gl_Position = projectionMatrix * viewPosition;
-            // Dòng này làm cho các hạt nhỏ hơn khi ở xa, mô phỏng hành vi của PointsMaterial
-            gl_PointSize = uSize / -viewPosition.z;
-        }
-    `,
-  fragmentShader: `
-        varying vec3 vColor;
-        void main() {
-            // Làm cho các hạt có hình tròn thay vì hình vuông
-            float dist = length(gl_PointCoord - vec2(0.5));
-            if (dist > 0.5) discard;
-
-            gl_FragColor = vec4(vColor, 1.0);
-        }
-    `,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
-  transparent: true,
-  vertexColors: true
-});
-const galaxy = new THREE.Points(galaxyGeometry, galaxyMaterial);
-scene.add(galaxy);
+        `,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        transparent: true,
+        vertexColors: true
+    });
+    
+    const galaxy = new THREE.Points(galaxyGeometry, galaxyMaterial);
+    
+    // Đặt vị trí riêng cho từng nhóm (để 58 nhóm không bị chồng lên nhau)
+    // Ví dụ: Đặt chúng trên một vòng tròn lớn
+    const offsetAngle = (groupIndex / numGroups) * Math.PI * 2;
+    const offsetRadius = 500; // Khoảng cách giữa các thiên hà nhỏ
+    galaxy.position.x = Math.cos(offsetAngle) * offsetRadius;
+    galaxy.position.z = Math.sin(offsetAngle) * offsetRadius;
+    
+    scene.add(galaxy);
+    galaxyGroups.push(galaxy);
+}
 
 function createNeonTexture(image, size) {
   const canvas = document.createElement('canvas');
